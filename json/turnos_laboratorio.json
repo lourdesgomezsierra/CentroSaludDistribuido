@@ -1,0 +1,74 @@
+[
+    {
+        "origen": "laboratorio",
+        "turno_externo": "LAB-001",
+        "paciente_id": 1001,
+        "paciente": "Ana Pérez",
+        "fecha": "2026-11-18",
+        "hora": "08:00",
+        "area": "Laboratorio",
+        "tipo_estudio": "Hemograma",
+        "profesional": "Dra. Laura Gómez",
+        "estado": "Confirmado"
+    },
+    {
+        "origen": "laboratorio",
+        "turno_externo": "LAB-002",
+        "paciente_id": 1002,
+        "paciente": "Bruno Díaz",
+        "fecha": "2026-11-18",
+        "hora": "08:30",
+        "area": "Laboratorio",
+        "tipo_estudio": "Glucemia",
+        "profesional": "Dr. Martín Ruiz",
+        "estado": "Pendiente"
+    },
+    {
+        "origen": "laboratorio",
+        "turno_externo": "LAB-003",
+        "paciente_id": 1003,
+        "paciente": "Carla Benítez",
+        "fecha": "2026-11-19",
+        "hora": "09:00",
+        "area": "Laboratorio",
+        "tipo_estudio": "Perfil lipídico",
+        "profesional": "Dra. Laura Gómez",
+        "estado": "Confirmado"
+    },
+    {
+        "origen": "laboratorio",
+        "turno_externo": "LAB-004",
+        "paciente_id": 1004,
+        "paciente": "Diego Acosta",
+        "fecha": "2026-11-19",
+        "hora": "09:30",
+        "area": "Laboratorio",
+        "tipo_estudio": "Urea y creatinina",
+        "profesional": "Dr. Martín Ruiz",
+        "estado": "Cancelado"
+    },
+    {
+        "origen": "laboratorio",
+        "turno_externo": "LAB-005",
+        "paciente_id": 1005,
+        "paciente": "Elena Fernández",
+        "fecha": "2026-11-20",
+        "hora": "08:15",
+        "area": "Laboratorio",
+        "tipo_estudio": "Orina completa",
+        "profesional": "Dra. Laura Gómez",
+        "estado": "Confirmado"
+    },
+    {
+        "origen": "laboratorio",
+        "turno_externo": "LAB-006",
+        "paciente_id": 1006,
+        "paciente": "Facundo López",
+        "fecha": "2026-11-20",
+        "hora": "10:00",
+        "area": "Laboratorio",
+        "tipo_estudio": "Hepatograma",
+        "profesional": "Dr. Martín Ruiz",
+        "estado": "Pendiente"
+    }
+]

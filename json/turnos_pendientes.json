@@ -1,0 +1,19 @@
+[
+    {
+        "origen": "diagnostico_imagenes",
+        "turno_id": null,
+        "paciente_id": 1011,
+        "paciente": "Sofia Acuña",
+        "fecha": "2026-11-21",
+        "hora": null,
+        "area": "Diagnóstico por imágenes",
+        "tipo_estudio": "ecografia renal",
+        "profesional": null,
+        "estado": "Pendiente",
+        "valido": false,
+        "campos_faltantes": [
+            "hora",
+            "profesional"
+        ]
+    }
+]
