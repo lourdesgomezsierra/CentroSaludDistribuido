@@ -1,0 +1,40 @@
+
+services:
+  consultorios:
+    image: postgres:18
+    container_name: salud_consultorios
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: salud_db
+      POSTGRES_USER: salud_admin
+      POSTGRES_PASSWORD: salud2026
+    ports:
+      - "5443:5432"
+    volumes:
+      - ./consultorios/data:/var/lib/postgresql
+
+  laboratorio:
+    image: postgres:18
+    container_name: salud_laboratorio
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: salud_db
+      POSTGRES_USER: salud_admin
+      POSTGRES_PASSWORD: salud2026
+    ports:
+      - "5444:5432"
+    volumes:
+      - ./laboratorio/data:/var/lib/postgresql
+
+  imagenes:
+    image: postgres:18
+    container_name: salud_imagenes
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: salud_db
+      POSTGRES_USER: salud_admin
+      POSTGRES_PASSWORD: salud2026
+    ports:
+      - "5445:5432"
+    volumes:
+      - ./imagenes/data:/var/lib/postgresql
