@@ -1,0 +1,11 @@
+FUENTES HETEROGENEAS - CENTRO SALUD DISTRIBUIDO
+
+Contenido:
+- excel/turnos_laboratorio.xlsx: planilla semiestructurada con turnos ficticios del laboratorio.
+- txt/reportes_imagenes.txt: reportes en texto libre del area de diagnostico por imagenes. Incluye un registro incompleto para probar validaciones.
+- relacional/origen_consultorios.sql: esquema y registros ficticios del origen relacional de consultorios externos.
+
+Todos los datos son inventados y se usan exclusivamente para pruebas academicas.
+No contienen informacion de pacientes reales.
+
+Nota: estos archivos son fuentes de entrada de prueba. Todavia no implementan el proceso ETL ni la replicacion entre nodos.

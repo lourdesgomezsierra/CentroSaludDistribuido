@@ -1,0 +1,18 @@
+REPORTES DE TURNOS - DIAGNOSTICO POR IMAGENES
+Centro de Salud - Datos ficticios para pruebas academicas
+Fecha de generacion: 15/11/2026
+
+[REPORTE 1]
+El paciente 1007, Gabriela Torres, tiene una radiografia de torax agendada para el 18/11/2026 a las 11:00. Profesional: Dr. Pablo Medina. Estado: confirmado.
+
+[REPORTE 2]
+19/11/2026 - 09:30 hs: turno de ecografia abdominal para paciente N° 1008 (Hernan Sosa). Atiende la Dra. Natalia Vera. El turno fue CANCELADO por el paciente.
+
+[REPORTE 3]
+Se registro un nuevo turno para el paciente 1009, Julieta Ramírez. Estudio: mamografia. Fecha 20/11/2026, horario 10:15. Profesional asignado: Dra. Natalia Vera. Estado pendiente.
+
+[REPORTE 4]
+Cambio de horario: el turno de resonancia magnetica del paciente 1010, Marcos Benitez, previsto para el 20/11/2026 a las 12:00, pasa a las 13:00. Profesional: Dr. Pablo Medina. Estado: confirmado.
+
+[REPORTE 5 - INCOMPLETO]
+Paciente 1011, Sofia Acuña. Estudio: ecografia renal. Fecha: 21/11/2026. No se informa horario ni profesional. Estado: pendiente de completar.
