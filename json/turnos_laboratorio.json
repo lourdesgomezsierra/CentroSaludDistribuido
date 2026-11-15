@@ -9,7 +9,9 @@
         "area": "Laboratorio",
         "tipo_estudio": "Hemograma",
         "profesional": "Dra. Laura Gómez",
-        "estado": "Confirmado"
+        "estado": "Confirmado",
+        "valido": true,
+        "campos_faltantes": []
     },
     {
         "origen": "laboratorio",
@@ -21,7 +23,9 @@
         "area": "Laboratorio",
         "tipo_estudio": "Glucemia",
         "profesional": "Dr. Martín Ruiz",
-        "estado": "Pendiente"
+        "estado": "Pendiente",
+        "valido": true,
+        "campos_faltantes": []
     },
     {
         "origen": "laboratorio",
@@ -33,7 +37,9 @@
         "area": "Laboratorio",
         "tipo_estudio": "Perfil lipídico",
         "profesional": "Dra. Laura Gómez",
-        "estado": "Confirmado"
+        "estado": "Confirmado",
+        "valido": true,
+        "campos_faltantes": []
     },
     {
         "origen": "laboratorio",
@@ -45,7 +51,9 @@
         "area": "Laboratorio",
         "tipo_estudio": "Urea y creatinina",
         "profesional": "Dr. Martín Ruiz",
-        "estado": "Cancelado"
+        "estado": "Cancelado",
+        "valido": true,
+        "campos_faltantes": []
     },
     {
         "origen": "laboratorio",
@@ -57,7 +65,9 @@
         "area": "Laboratorio",
         "tipo_estudio": "Orina completa",
         "profesional": "Dra. Laura Gómez",
-        "estado": "Confirmado"
+        "estado": "Confirmado",
+        "valido": true,
+        "campos_faltantes": []
     },
     {
         "origen": "laboratorio",
@@ -69,6 +79,8 @@
         "area": "Laboratorio",
         "tipo_estudio": "Hepatograma",
         "profesional": "Dr. Martín Ruiz",
-        "estado": "Pendiente"
+        "estado": "Pendiente",
+        "valido": true,
+        "campos_faltantes": []
     }
 ]

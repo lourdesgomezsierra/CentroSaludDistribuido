@@ -7,7 +7,7 @@
         "hora": "11:00",
         "area": "Diagnóstico por imágenes",
         "tipo_estudio": "radiografia de torax",
-        "profesional": "Dr",
+        "profesional": "Dr. Pablo Medina",
         "estado": "Confirmado",
         "valido": true,
         "campos_faltantes": []
@@ -20,7 +20,7 @@
         "hora": "09:30",
         "area": "Diagnóstico por imágenes",
         "tipo_estudio": "ecografia abdominal",
-        "profesional": "Dra",
+        "profesional": "Dra. Natalia Vera",
         "estado": "Cancelado",
         "valido": true,
         "campos_faltantes": []
@@ -33,7 +33,7 @@
         "hora": "10:15",
         "area": "Diagnóstico por imágenes",
         "tipo_estudio": "mamografia",
-        "profesional": "Dra",
+        "profesional": "Dra. Natalia Vera",
         "estado": "Pendiente",
         "valido": true,
         "campos_faltantes": []
@@ -46,7 +46,7 @@
         "hora": "13:00",
         "area": "Diagnóstico por imágenes",
         "tipo_estudio": "resonancia magnetica",
-        "profesional": "Dr",
+        "profesional": "Dr. Pablo Medina",
         "estado": "Confirmado",
         "valido": true,
         "campos_faltantes": []
