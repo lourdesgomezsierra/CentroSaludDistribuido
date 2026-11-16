@@ -4,7 +4,6 @@ import json
 import psycopg
 
 # Configuración de los tres nodos PostgreSQL.
-# La contraseña se obtiene de una variable de entorno.
 DB_CONFIG = {
     "consultorios": {
         "host": "localhost",
@@ -38,7 +37,8 @@ def conectar(nodo):
         port=config["port"],
         dbname=config["dbname"],
         user=config["user"],
-        password=PASSWORD
+        password=PASSWORD,
+        connect_timeout=3
     )
 
 
@@ -64,28 +64,37 @@ def convertir_evento(nodo, evento, datos):
                       ON pr.profesional_id = t.profesional_id
                     WHERE t.turno_id = %s
                 """, (turno_id,))
+
                 nombres = cur.fetchone()
 
                 if nombres:
                     paciente, profesional = nombres
                 else:
-                    # En caso de una baja, buscamos los datos
-                    # en las tablas maestras usando los IDs del evento.
+                    # Para bajas, recuperamos los nombres
+                    # usando los identificadores del evento.
                     cur.execute("""
                         SELECT nombre_completo
                         FROM pacientes
                         WHERE paciente_id = %s
                     """, (datos["paciente_id"],))
+
                     fila = cur.fetchone()
-                    paciente = fila[0] if fila else "Paciente no disponible"
+                    paciente = (
+                        fila[0] if fila
+                        else "Paciente no disponible"
+                    )
 
                     cur.execute("""
                         SELECT nombre_completo
                         FROM profesionales
                         WHERE profesional_id = %s
                     """, (datos["profesional_id"],))
+
                     fila = cur.fetchone()
-                    profesional = fila[0] if fila else "Profesional no disponible"
+                    profesional = (
+                        fila[0] if fila
+                        else "Profesional no disponible"
+                    )
 
         return {
             "nodo_origen": "consultorios",
@@ -109,8 +118,10 @@ def convertir_evento(nodo, evento, datos):
 
     return {
         "nodo_origen": origen,
-        "turno_origen_id": datos.get("turno_origen_id")
-                           or str(datos.get("turno_id")),
+        "turno_origen_id": (
+            datos.get("turno_origen_id")
+            or str(datos.get("turno_id"))
+        ),
         "paciente_id": datos.get("paciente_id"),
         "paciente": datos["paciente"],
         "fecha": datos["fecha"],
@@ -141,6 +152,7 @@ def aplicar_evento(destino, nodo_origen, evento_id,
 
             recibido = cur.fetchone()
 
+            # Si ya se recibió anteriormente, no lo duplicamos.
             if recibido is None:
                 return
 
@@ -204,6 +216,7 @@ def sincronizar():
     for origen in DB_CONFIG:
 
         try:
+            # Leemos los eventos pendientes del nodo de origen.
             with conectar(origen) as conn:
                 with conn.cursor() as cur:
                     cur.execute("""
@@ -214,50 +227,82 @@ def sincronizar():
                         WHERE sincronizado = FALSE
                         ORDER BY evento_id
                     """)
+
                     eventos = cur.fetchall()
 
             for evento_id, entidad, identificador, operacion, datos in eventos:
+
                 destinos = [
                     nodo for nodo in DB_CONFIG
                     if nodo != origen
                 ]
 
                 try:
-                    turno = convertir_evento(origen, evento_id, datos)
+                    # Convertimos el evento al formato compartido.
+                    turno = convertir_evento(
+                        origen, evento_id, datos
+                    )
 
-                    # Solo se confirma el evento cuando ambos
-                    # destinos reciben correctamente el cambio.
+                    errores = []
+
+                    # Intentamos entregar a cada destino
+                    # de manera independiente.
                     for destino in destinos:
-                        aplicar_evento(
-                            destino,
-                            origen,
-                            evento_id,
-                            entidad,
-                            operacion,
-                            turno
+                        try:
+                            aplicar_evento(
+                                destino,
+                                origen,
+                                evento_id,
+                                entidad,
+                                operacion,
+                                turno
+                            )
+
+                            print(
+                                f"Evento {evento_id}: "
+                                f"recibido por {destino}."
+                            )
+
+                        except Exception as error:
+                            errores.append(destino)
+
+                            print(
+                                f"No se pudo entregar el evento "
+                                f"{evento_id} a {destino}: {error}"
+                            )
+
+                    # Solo se marca como sincronizado cuando
+                    # los dos destinos recibieron el evento.
+                    if not errores:
+                        with conectar(origen) as conn:
+                            with conn.cursor() as cur:
+                                cur.execute("""
+                                    UPDATE eventos_sincronizacion
+                                    SET sincronizado = TRUE
+                                    WHERE evento_id = %s
+                                """, (evento_id,))
+
+                        print(
+                            f"Evento {evento_id} de {origen}: "
+                            "sincronizado correctamente."
                         )
 
-                    with conectar(origen) as conn:
-                        with conn.cursor() as cur:
-                            cur.execute("""
-                                UPDATE eventos_sincronizacion
-                                SET sincronizado = TRUE
-                                WHERE evento_id = %s
-                            """, (evento_id,))
-
-                    print(
-                        f"Evento {evento_id} de {origen}: "
-                        "sincronizado correctamente."
-                    )
+                    else:
+                        print(
+                            f"Evento {evento_id} de {origen}: "
+                            "queda pendiente de entrega."
+                        )
 
                 except Exception as error:
                     print(
-                        f"Evento {evento_id} de {origen} "
-                        f"pendiente: {error}"
+                        f"Error procesando evento {evento_id} "
+                        f"de {origen}: {error}"
                     )
 
         except Exception as error:
-            print(f"No se pudo conectar con {origen}: {error}")
+            print(
+                f"No se pudo procesar el nodo {origen}: {error}"
+            )
 
 
 if __name__ == "__main__":

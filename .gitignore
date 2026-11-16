@@ -238,3 +238,19 @@ venv/
 # Archivos temporales
 *.log
 >>>>>>> dc6ad5f (Primer avance del proyecto)
+
+# Datos internos de PostgreSQL
+consultorios/data/
+consultorios_replica/data/
+laboratorio/data/
+imagenes/data/
+
+# Archivos temporales y respaldos
+backups/
+*.dump
+*.backup
+*.log
+
+# Python
+__pycache__/
+*.pyc
