@@ -1,0 +1,10 @@
+{
+  "name": "centrosalud-ops-ui",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Interfaz local de operación para CentroSalud Distribuido",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
+  }
+}
