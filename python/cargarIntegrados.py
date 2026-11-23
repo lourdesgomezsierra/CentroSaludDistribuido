@@ -1,77 +1,58 @@
-
 from pathlib import Path
 import json
+import os
+
 import psycopg2
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 ARCHIVO_JSON = BASE_DIR / "json" / "turnos_unificados.json"
 
 
 def cargar_turnos():
+    password = os.environ.get("DB_PASSWORD")
+    if not password:
+        raise RuntimeError("Definí DB_PASSWORD en el entorno o en .env")
+
     with open(ARCHIVO_JSON, "r", encoding="utf-8") as archivo:
         turnos = json.load(archivo)
 
-    conexion = psycopg2.connect(
-        host="localhost",
-        port=5443,
+    cargados = 0
+    with psycopg2.connect(
+        host=os.environ.get("DB_HOST_CONSULTORIOS", "localhost"),
+        port=int(os.environ.get("DB_PORT_CONSULTORIOS", "5443")),
         database="salud_db",
         user="salud_admin",
-        password="salud2026"
-    )
-
-    cursor = conexion.cursor()
-
-    try:
-        cargados = 0
-
-        for turno in turnos:
-            cursor.execute("""
-                INSERT INTO turnos_integrados (
-                    origen,
-                    turno_origen_id,
-                    paciente_id_origen,
-                    paciente,
-                    fecha,
-                    hora,
-                    area,
-                    tipo_estudio,
-                    profesional,
-                    estado
+        password=password,
+        connect_timeout=3,
+    ) as conexion:
+        with conexion.cursor() as cursor:
+            for turno in turnos:
+                if not turno.get("valido", True):
+                    continue
+                identificador = turno.get("turno_id")
+                if not identificador:
+                    raise ValueError(
+                        f"Turno sin identificador original: {turno!r}"
+                    )
+                cursor.execute(
+                    """INSERT INTO turnos_integrados (
+                           origen, turno_origen_id, paciente_id_origen,
+                           paciente, fecha, hora, area, tipo_estudio,
+                           profesional, estado
+                       ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                       ON CONFLICT (origen, turno_origen_id) DO NOTHING""",
+                    (
+                        turno["origen"], str(identificador),
+                        turno.get("paciente_id"), turno["paciente"],
+                        turno["fecha"], turno["hora"], turno["area"],
+                        turno["tipo_estudio"], turno["profesional"],
+                        turno["estado"],
+                    ),
                 )
-                SELECT %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-                WHERE NOT EXISTS (
-                    SELECT 1
-                    FROM turnos_integrados
-                    WHERE origen = %s
-                    AND turno_origen_id = %s
-                );
-            """, (
-                turno["origen"],
-                turno.get("turno_id"),
-                turno["paciente_id"],
-                turno["paciente"],
-                turno["fecha"],
-                turno["hora"],
-                turno["area"],
-                turno["tipo_estudio"],
-                turno["profesional"],
-                turno["estado"],
-                turno["origen"],
-                turno.get("turno_id")
-            ))
+                cargados += cursor.rowcount
 
-            cargados += cursor.rowcount
-
-        conexion.commit()
-        print(f"Registros nuevos cargados: {cargados}")
-
-    except Exception as error:
-        conexion.rollback()
-        print("Error durante la carga:", error)
-
-    finally:
-        cursor.close()
-        conexion.close()
+    print(f"Registros nuevos cargados: {cargados}")
 
 
 if __name__ == "__main__":

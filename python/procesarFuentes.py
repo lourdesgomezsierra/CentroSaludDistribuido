@@ -144,7 +144,7 @@ def procesar_txt():
 
     turnos = []
 
-    for bloque in bloques:
+    for indice, bloque in enumerate(bloques, start=1):
 
         paciente_id = extraer_patron(
             bloque,
@@ -203,12 +203,18 @@ def procesar_txt():
             estado = None
 
         if fecha:
-            separador = "/" if "/" in fecha else "-"
-            dia, mes, anio = fecha.split(separador)
-            fecha = f"{anio}-{mes}-{dia}"
+            fecha_normalizada = pd.to_datetime(
+                fecha, dayfirst=True, errors="coerce"
+            )
+            fecha = (
+                fecha_normalizada.strftime("%Y-%m-%d")
+                if pd.notna(fecha_normalizada)
+                else None
+            )
 
         turno = {
             "origen": "diagnostico_imagenes",
+            "turno_id": f"IMG-{indice}",
             "paciente_id": int(paciente_id) if paciente_id else None,
             "paciente": paciente,
             "fecha": fecha,

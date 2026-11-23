@@ -1,0 +1,37 @@
+{
+    "sqltools.connections": [
+        {
+            "ssh": "Disabled",
+            "previewLimit": 50,
+            "server": "localhost",
+            "port": 5443,
+            "driver": "PostgreSQL",
+            "name": "Consultorios",
+            "database": "salud_db",
+            "username": "salud_admin",
+            "password": "salud2026"
+        },
+        {
+            "ssh": "Disabled",
+            "previewLimit": 50,
+            "server": "localhost",
+            "port": 5444,
+            "driver": "PostgreSQL",
+            "name": "Laboratorio",
+            "database": "salud_db",
+            "username": "salud_admin",
+            "password": "salud2026"
+        },
+        {
+            "ssh": "Disabled",
+            "previewLimit": 50,
+            "server": "localhost",
+            "port": 5445,
+            "driver": "PostgreSQL",
+            "name": "Diagnostico por Imagenes",
+            "database": "salud_db",
+            "username": "salud_admin",
+            "password": "salud2026"
+        }
+    ]
+}

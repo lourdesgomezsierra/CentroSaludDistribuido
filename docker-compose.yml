@@ -1,4 +1,3 @@
-
 services:
   consultorios:
     image: postgres:18
@@ -7,11 +6,24 @@ services:
     environment:
       POSTGRES_DB: salud_db
       POSTGRES_USER: salud_admin
-      POSTGRES_PASSWORD: salud2026
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Definí DB_PASSWORD en .env}
     ports:
       - "5443:5432"
     volumes:
       - ./consultorios/data:/var/lib/postgresql
+      - ./sql/sincronizacion.sql:/docker-entrypoint-initdb.d/01_sincronizacion.sql:ro
+      - ./sql/esquema_sedes.sql:/docker-entrypoint-initdb.d/02_esquema_sedes.sql:ro
+      - ./sql/esquema_consultorios.sql:/docker-entrypoint-initdb.d/03_esquema_consultorios.sql:ro
+      - ./sql/configuracion_consultorios.sql:/docker-entrypoint-initdb.d/04_configuracion_nodo.sql:ro
+      - ./sql/turnos.sql:/docker-entrypoint-initdb.d/05_turnos.sql:ro
+      - ./sql/eventos_automaticos.sql:/docker-entrypoint-initdb.d/06_eventos_automaticos.sql:ro
+      - ./sql/eventos_consultorios.sql:/docker-entrypoint-initdb.d/07_eventos_consultorios.sql:ro
+      - ./fuentes/relacional/origen_consultorios.sql:/docker-entrypoint-initdb.d/08_origen_consultorios.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U salud_admin -d salud_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
 
   laboratorio:
     image: postgres:18
@@ -20,11 +32,21 @@ services:
     environment:
       POSTGRES_DB: salud_db
       POSTGRES_USER: salud_admin
-      POSTGRES_PASSWORD: salud2026
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Definí DB_PASSWORD en .env}
     ports:
       - "5444:5432"
     volumes:
       - ./laboratorio/data:/var/lib/postgresql
+      - ./sql/sincronizacion.sql:/docker-entrypoint-initdb.d/01_sincronizacion.sql:ro
+      - ./sql/esquema_sedes.sql:/docker-entrypoint-initdb.d/02_esquema_sedes.sql:ro
+      - ./sql/configuracion_laboratorio.sql:/docker-entrypoint-initdb.d/03_configuracion_nodo.sql:ro
+      - ./sql/turnos.sql:/docker-entrypoint-initdb.d/04_turnos.sql:ro
+      - ./sql/eventos_automaticos.sql:/docker-entrypoint-initdb.d/05_eventos_automaticos.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U salud_admin -d salud_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
 
   imagenes:
     image: postgres:18
@@ -33,8 +55,43 @@ services:
     environment:
       POSTGRES_DB: salud_db
       POSTGRES_USER: salud_admin
-      POSTGRES_PASSWORD: salud2026
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Definí DB_PASSWORD en .env}
     ports:
       - "5445:5432"
     volumes:
       - ./imagenes/data:/var/lib/postgresql
+      - ./sql/sincronizacion.sql:/docker-entrypoint-initdb.d/01_sincronizacion.sql:ro
+      - ./sql/esquema_sedes.sql:/docker-entrypoint-initdb.d/02_esquema_sedes.sql:ro
+      - ./sql/configuracion_imagenes.sql:/docker-entrypoint-initdb.d/03_configuracion_nodo.sql:ro
+      - ./sql/turnos.sql:/docker-entrypoint-initdb.d/04_turnos.sql:ro
+      - ./sql/eventos_automaticos.sql:/docker-entrypoint-initdb.d/05_eventos_automaticos.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U salud_admin -d salud_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  sincronizador:
+    build:
+      context: .
+      dockerfile: docker/sync.Dockerfile
+    restart: unless-stopped
+    environment:
+      DB_PASSWORD: ${DB_PASSWORD:?Definí DB_PASSWORD en .env}
+      DB_HOST_CONSULTORIOS: consultorios
+      DB_HOST_LABORATORIO: laboratorio
+      DB_HOST_DIAGNOSTICO_IMAGENES: imagenes
+      DB_PORT_CONSULTORIOS: "5432"
+      DB_PORT_LABORATORIO: "5432"
+      DB_PORT_DIAGNOSTICO_IMAGENES: "5432"
+      SYNC_INTERVAL_SECONDS: "10"
+      SYNC_RETRY_BASE_SECONDS: "10"
+      SYNC_RETRY_MAX_SECONDS: "300"
+      SYNC_SOURCE_ERROR_LOG_SECONDS: "60"
+    depends_on:
+      consultorios:
+        condition: service_healthy
+      laboratorio:
+        condition: service_healthy
+      imagenes:
+        condition: service_healthy

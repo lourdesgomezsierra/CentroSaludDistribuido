@@ -1,4 +1,4 @@
-<<<<<<< HEAD
+﻿
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -254,3 +254,6 @@ backups/
 # Python
 __pycache__/
 *.pyc
+
+# Repositorio duplicado y datos locales
+/CentroSaludDistribuido/

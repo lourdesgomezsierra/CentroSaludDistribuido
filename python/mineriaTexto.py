@@ -1,79 +1,23 @@
 
 import re
-import unicodedata
 from collections import Counter
 
-# Leer archivo de reportes
 ruta = "fuentes/txt/reportes_imagenes.txt"
 
 with open(ruta, "r", encoding="utf-8") as archivo:
     texto = archivo.read()
 
-# Separar los reportes y evitar incluir el encabezado
-texto_reportes = texto[texto.find("[REPORTE 1]"):]
-reportes = re.split(r"\[REPORTE \d+.*?\]", texto_reportes)
-reportes = [r.strip() for r in reportes if r.strip()]
-
-# Palabras que no aportan información al análisis
-stopwords = {
-    "para", "del", "con", "por", "una", "el", "la", "de",
-    "se", "un", "en", "al", "y", "a", "hs", "tiene",
-    "paciente", "turno", "turnos", "profesional", "asignado",
-    "dra", "dr", "fecha", "horario", "estudio", "nuevo",
-    "informa", "previsto", "pasa", "atiende", "registro",
-    "las", "los", "fue", "no", "ni", "estado", "n",
-    "agendada", "cambio", "completar"
-}
-
-# Normalizar texto para facilitar la comparación
-def normalizar(texto):
-    texto = unicodedata.normalize("NFD", texto.lower())
-    return "".join(c for c in texto if unicodedata.category(c) != "Mn")
-
-# Extraer palabras relevantes
-frecuencia = Counter()
-
-print("\n--- PALABRAS RELEVANTES POR REPORTE ---")
-
-for numero, reporte in enumerate(reportes, start=1):
-    palabras = re.findall(r"\b[a-záéíóúñ]+\b", reporte.lower())
-
-    relevantes = [
-        palabra for palabra in palabras
-        if normalizar(palabra) not in stopwords
-    ]
-
-    frecuencia.update(relevantes)
-
-    print(f"\nReporte {numero}")
-    print("Palabras relevantes:", relevantes)
-
-# Frecuencia de términos
-print("\n--- FRECUENCIA DE TÉRMINOS ---")
-
-for palabra, cantidad in frecuencia.most_common():
-    print(f"{palabra}: {cantidad}")
-
-# Análisis de estados
-print("\n--- ANALISIS POR ESTADO ---")
+# Separar los reportes individuales, incluido el quinto incompleto
+reportes = re.findall(
+    r"\[REPORTE\s+\d+.*?(?=\[REPORTE\s+\d+|\Z)",
+    texto,
+    flags=re.IGNORECASE | re.DOTALL
+)
 
 estados = Counter()
-
-for reporte in reportes:
-    texto_normalizado = normalizar(reporte)
-
-    if "cancelado" in texto_normalizado:
-        estados["Cancelado"] += 1
-    elif "confirmado" in texto_normalizado:
-        estados["Confirmado"] += 1
-    elif "pendiente" in texto_normalizado:
-        estados["Pendiente"] += 1
-
-for estado, cantidad in estados.items():
-    print(f"{estado}: {cantidad}")
-
-# Análisis por tipo de estudio
-print("\n--- ANALISIS POR TIPO DE ESTUDIO ---")
+estudios = Counter()
+completos = 0
+incompletos = 0
 
 tipos_estudio = [
     "radiografia de torax",
@@ -83,26 +27,54 @@ tipos_estudio = [
     "ecografia renal"
 ]
 
-conteo_estudios = Counter()
-texto_completo = normalizar(texto)
+for reporte in reportes:
+    texto_min = reporte.lower()
 
-for estudio in tipos_estudio:
-    if normalizar(estudio) in texto_completo:
-        conteo_estudios[estudio] += 1
+    # Clasificar por estado
+    for estado in ["confirmado", "cancelado", "pendiente"]:
+        if estado in texto_min:
+            estados[estado.capitalize()] += 1
+            break
 
-for estudio, cantidad in conteo_estudios.items():
-    print(f"{estudio}: {cantidad}")
+    # Clasificar por tipo de estudio
+    for estudio in tipos_estudio:
+        if estudio in texto_min:
+            estudios[estudio.capitalize()] += 1
+            break
 
-# Control de reportes incompletos
-print("\n--- CONTROL DE REPORTES ---")
-
-for numero, reporte in enumerate(reportes, start=1):
-    tiene_horario = bool(re.search(r"\b\d{1,2}:\d{2}\b", reporte))
-    tiene_profesional = bool(
-        re.search(r"Profesional:|Atiende|Profesional asignado:", reporte, re.I)
+    # Controlar los datos disponibles
+    tiene_paciente = "paciente" in texto_min
+    tiene_estudio = any(estudio in texto_min for estudio in tipos_estudio)
+    tiene_fecha = bool(re.search(r"\d{2}/\d{2}/\d{4}", texto_min))
+    tiene_hora = bool(re.search(r"\d{1,2}:\d{2}", texto_min))
+    tiene_profesional = (
+        "profesional" in texto_min or "atiende" in texto_min
     )
 
-    if not tiene_horario or not tiene_profesional:
-        print(f"Reporte {numero}: Información incompleta")
+    if all([
+        tiene_paciente,
+        tiene_estudio,
+        tiene_fecha,
+        tiene_hora,
+        tiene_profesional
+    ]):
+        completos += 1
     else:
-        print(f"Reporte {numero}: Información completa")
+        incompletos += 1
+
+print("\n========== MINERÍA DE TEXTO ==========")
+
+print("\nANÁLISIS POR ESTADO")
+for estado, cantidad in estados.items():
+    print(f"{estado}: {cantidad}")
+
+print("\nANÁLISIS POR TIPO DE ESTUDIO")
+for estudio, cantidad in estudios.items():
+    print(f"{estudio}: {cantidad}")
+
+print("\nCONTROL DE CALIDAD")
+print(f"Reportes completos: {completos}")
+print(f"Reportes incompletos: {incompletos}")
+print(f"Total procesado: {len(reportes)}")
+
+print("\n======================================")

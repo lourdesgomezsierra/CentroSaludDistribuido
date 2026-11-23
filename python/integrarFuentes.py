@@ -1,6 +1,7 @@
 
 from pathlib import Path
 import json
+import os
 import psycopg2
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -10,32 +11,28 @@ CARPETA_JSON = BASE_DIR / "json"
 def leer_consultorios():
     print("Leyendo origen PostgreSQL...")
 
-    conexion = psycopg2.connect(
-        host="localhost",
-        port=5443,
+    password = os.environ.get("DB_PASSWORD")
+    if not password:
+        raise RuntimeError("Definí DB_PASSWORD en el entorno o en .env")
+
+    with psycopg2.connect(
+        host=os.environ.get("DB_HOST_CONSULTORIOS", "localhost"),
+        port=int(os.environ.get("DB_PORT_CONSULTORIOS", "5443")),
         database="salud_db",
         user="salud_admin",
-        password="salud2026"
-    )
-
-    cursor = conexion.cursor()
-
-    cursor.execute("""
-        SELECT
-            t.turno_id,
-            p.paciente_id,
-            p.nombre_completo,
-            t.fecha,
-            t.hora,
-            pr.nombre_completo,
-            t.estado
-        FROM turnos_consultorios t
-        JOIN pacientes p ON t.paciente_id = p.paciente_id
-        JOIN profesionales pr ON t.profesional_id = pr.profesional_id
-        ORDER BY t.turno_id;
-    """)
-
-    registros = cursor.fetchall()
+        password=password,
+        connect_timeout=3,
+    ) as conexion:
+        with conexion.cursor() as cursor:
+            cursor.execute("""
+                SELECT t.turno_id, p.paciente_id, p.nombre_completo,
+                       t.fecha, t.hora, pr.nombre_completo, t.estado
+                FROM turnos_consultorios t
+                JOIN pacientes p ON t.paciente_id = p.paciente_id
+                JOIN profesionales pr ON t.profesional_id = pr.profesional_id
+                ORDER BY t.turno_id;
+            """)
+            registros = cursor.fetchall()
 
     turnos = []
 
@@ -47,14 +44,11 @@ def leer_consultorios():
             "paciente": r[2],
             "fecha": r[3].isoformat(),
             "hora": r[4].strftime("%H:%M"),
-            "area": "Consultorios externos",
+            "area": "Consultorios",
             "tipo_estudio": "Consulta médica",
             "profesional": r[5],
             "estado": r[6]
         })
-
-    cursor.close()
-    conexion.close()
 
     print(f"Consultorios: {len(turnos)} registros.")
     return turnos
@@ -70,7 +64,7 @@ def leer_json(nombre_archivo):
 def normalizar_laboratorio():
     print("Leyendo origen Excel procesado...")
 
-    registros = leer_json("turnos_laboratorio.json")
+    registros = [r for r in leer_json("turnos_laboratorio.json") if r.get("valido")]
     turnos = []
 
     for r in registros:
@@ -94,18 +88,18 @@ def normalizar_laboratorio():
 def normalizar_imagenes():
     print("Leyendo origen TXT procesado...")
 
-    registros = leer_json("turnos_imagenes.json")
+    registros = [r for r in leer_json("turnos_imagenes.json") if r.get("valido")]
     turnos = []
 
-    for r in registros:
+    for indice, r in enumerate(registros, start=1):
         turnos.append({
             "origen": "diagnostico_imagenes",
-            "turno_id": None,
+            "turno_id": r.get("turno_id") or f"IMG-{indice}",
             "paciente_id": r["paciente_id"],
             "paciente": r["paciente"],
             "fecha": r["fecha"],
             "hora": r["hora"],
-            "area": "Diagnóstico por imágenes",
+            "area": "Diagnóstico por Imágenes",
             "tipo_estudio": r["tipo_estudio"],
             "profesional": r["profesional"],
             "estado": r["estado"],
@@ -119,6 +113,7 @@ def normalizar_imagenes():
 
 def validar_turno(turno):
     campos = [
+        "turno_id",
         "paciente_id",
         "paciente",
         "fecha",

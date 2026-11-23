@@ -1,309 +1,250 @@
+"""Entrega idempotente de eventos del outbox entre los tres nodos."""
 
+import argparse
+import logging
 import os
-import json
+import time
+from datetime import timedelta
+
 import psycopg
 
-# Configuración de los tres nodos PostgreSQL.
-DB_CONFIG = {
-    "consultorios": {
-        "host": "localhost",
-        "port": 5443,
-        "dbname": "salud_db",
-        "user": "salud_admin"
-    },
-    "laboratorio": {
-        "host": "localhost",
-        "port": 5444,
-        "dbname": "salud_db",
-        "user": "salud_admin"
-    },
-    "diagnostico_imagenes": {
-        "host": "localhost",
-        "port": 5445,
-        "dbname": "salud_db",
-        "user": "salud_admin"
-    }
-}
 
-PASSWORD = os.getenv("DB_PASSWORD", "salud2026")
+NODOS = ("consultorios", "laboratorio", "diagnostico_imagenes")
+PASSWORD = os.environ.get("DB_PASSWORD")
+if not PASSWORD:
+    raise RuntimeError("Definí DB_PASSWORD para conectar a PostgreSQL")
+
+DB_CONFIG = {
+    nodo: {
+        "host": os.environ.get(f"DB_HOST_{nodo.upper()}", "localhost"),
+        "port": int(os.environ.get(f"DB_PORT_{nodo.upper()}", default_port)),
+        "dbname": os.environ.get(f"DB_NAME_{nodo.upper()}", "salud_db"),
+        "user": "salud_admin",
+    }
+    for nodo, default_port in zip(NODOS, (5443, 5444, 5445))
+}
+RETRY_BASE_SECONDS = max(float(os.environ.get("SYNC_RETRY_BASE_SECONDS", "10")), 1.0)
+RETRY_MAX_SECONDS = max(
+    float(os.environ.get("SYNC_RETRY_MAX_SECONDS", "300")), RETRY_BASE_SECONDS
+)
+SOURCE_ERROR_LOG_SECONDS = max(
+    float(os.environ.get("SYNC_SOURCE_ERROR_LOG_SECONDS", "60")), 1.0
+)
+ULTIMO_AVISO_ERROR_ORIGEN = {}
+
+
+def tiempo_espera_reintento(intentos, base=RETRY_BASE_SECONDS, maximo=RETRY_MAX_SECONDS):
+    """Espera exponencial acotada; intentos incluye el último intento registrado."""
+    espera = max(float(base), 1.0)
+    limite = max(float(maximo), espera)
+    exponentes = min(max(int(intentos or 1) - 1, 0), 64)
+    for _ in range(exponentes):
+        if espera >= limite:
+            break
+        espera = min(limite, espera * 2)
+    return espera
+
+
+def reintento_vencido(estado, intentos, ultimo_intento, ahora,
+                      base=RETRY_BASE_SECONDS, maximo=RETRY_MAX_SECONDS):
+    """Los pendientes se prueban enseguida; errores esperan su ventana de backoff."""
+    if estado == "pendiente":
+        return True
+    if estado != "error":
+        return False
+    if ultimo_intento is None:
+        return True
+    espera = tiempo_espera_reintento(intentos, base, maximo)
+    return ahora - ultimo_intento >= timedelta(seconds=espera)
+
+
+def registrar_aviso_error_origen(origen, ahora_monotonico, avisos,
+                                 intervalo=SOURCE_ERROR_LOG_SECONDS):
+    """Limita stacktraces repetidas; el sondeo de conexión sigue en cada ciclo."""
+    ultimo = avisos.get(origen)
+    if ultimo is not None and ahora_monotonico - ultimo < intervalo:
+        return False
+    avisos[origen] = ahora_monotonico
+    return True
 
 
 def conectar(nodo):
-    """Establece conexión con el nodo indicado."""
     config = DB_CONFIG[nodo]
-
     return psycopg.connect(
-        host=config["host"],
-        port=config["port"],
-        dbname=config["dbname"],
-        user=config["user"],
-        password=PASSWORD,
-        connect_timeout=3
+        **config, password=PASSWORD, connect_timeout=3
     )
 
 
-def convertir_evento(nodo, evento, datos):
-    """Convierte los eventos de cada sede al formato compartido."""
-
-    if isinstance(datos, str):
-        datos = json.loads(datos)
-
-    if nodo == "consultorios":
-        turno_id = datos["turno_id"]
-
-        # Recuperamos los nombres mediante las relaciones locales.
-        with conectar("consultorios") as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT p.nombre_completo,
-                           pr.nombre_completo
-                    FROM turnos_consultorios t
-                    JOIN pacientes p
-                      ON p.paciente_id = t.paciente_id
-                    JOIN profesionales pr
-                      ON pr.profesional_id = t.profesional_id
-                    WHERE t.turno_id = %s
-                """, (turno_id,))
-
-                nombres = cur.fetchone()
-
-                if nombres:
-                    paciente, profesional = nombres
-                else:
-                    # Para bajas, recuperamos los nombres
-                    # usando los identificadores del evento.
-                    cur.execute("""
-                        SELECT nombre_completo
-                        FROM pacientes
-                        WHERE paciente_id = %s
-                    """, (datos["paciente_id"],))
-
-                    fila = cur.fetchone()
-                    paciente = (
-                        fila[0] if fila
-                        else "Paciente no disponible"
-                    )
-
-                    cur.execute("""
-                        SELECT nombre_completo
-                        FROM profesionales
-                        WHERE profesional_id = %s
-                    """, (datos["profesional_id"],))
-
-                    fila = cur.fetchone()
-                    profesional = (
-                        fila[0] if fila
-                        else "Profesional no disponible"
-                    )
-
+def convertir_evento(nodo_origen, entidad, datos):
+    """Normaliza el snapshot capturado por el trigger, sin leer estado vivo."""
+    if entidad == "turnos_consultorios":
+        turno_id = datos.get("turno_origen_id") or datos.get("turno_id")
         return {
-            "nodo_origen": "consultorios",
-            "turno_origen_id": f"CONS-{turno_id}",
+            "nodo_creador": nodo_origen,
+            "turno_origen_id": str(turno_id),
+            "area": "Consultorios",
             "paciente_id": datos["paciente_id"],
-            "paciente": paciente,
+            "paciente": datos["paciente"],
             "fecha": datos["fecha"],
             "hora": datos["hora"],
-            "area": "Consultorios externos",
-            "tipo_estudio": "Consulta médica",
-            "profesional": profesional,
-            "estado": datos["estado"]
+            "tipo_estudio": datos.get("tipo_estudio", "Consulta médica"),
+            "profesional": datos["profesional"],
+            "estado": datos["estado"],
         }
+    if entidad != "turnos_locales":
+        raise ValueError(f"Entidad de sincronización no soportada: {entidad}")
 
-    # Laboratorio e Imágenes ya almacenan los datos completos.
-    origen = (
-        "laboratorio"
-        if nodo == "laboratorio"
-        else "diagnostico_imagenes"
+    required = (
+        "turno_origen_id", "nodo_creador", "area", "paciente", "fecha",
+        "hora", "tipo_estudio", "profesional", "estado",
     )
-
-    return {
-        "nodo_origen": origen,
-        "turno_origen_id": (
-            datos.get("turno_origen_id")
-            or str(datos.get("turno_id"))
-        ),
-        "paciente_id": datos.get("paciente_id"),
-        "paciente": datos["paciente"],
-        "fecha": datos["fecha"],
-        "hora": datos["hora"],
-        "area": datos["area"],
-        "tipo_estudio": datos["tipo_estudio"],
-        "profesional": datos["profesional"],
-        "estado": datos["estado"]
-    }
+    missing = [key for key in required if datos.get(key) is None]
+    if missing:
+        raise ValueError(f"Snapshot incompleto: {', '.join(missing)}")
+    if datos["nodo_creador"] != nodo_origen:
+        raise ValueError("El nodo creador no coincide con el origen del evento")
+    return {key: datos.get(key) for key in (*required, "paciente_id")}
 
 
-def aplicar_evento(destino, nodo_origen, evento_id,
-                   entidad, operacion, turno):
-    """Registra la recepción y aplica el cambio en el nodo destino."""
-
+def aplicar_evento(destino, nodo_origen, evento_id, entidad, operacion, turno):
+    """Deduplica y aplica el snapshot/tombstone en una sola transacción."""
     with conectar(destino) as conn:
         with conn.cursor() as cur:
-
-            # Evita aplicar dos veces el mismo evento.
-            cur.execute("""
-                INSERT INTO eventos_recibidos
-                    (nodo_origen, identificador_evento, entidad)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (nodo_origen, identificador_evento)
-                DO NOTHING
-                RETURNING evento_id
-            """, (nodo_origen, str(evento_id), entidad))
-
-            recibido = cur.fetchone()
-
-            # Si ya se recibió anteriormente, no lo duplicamos.
-            if recibido is None:
-                return
+            cur.execute(
+                """INSERT INTO eventos_recibidos
+                       (nodo_origen, identificador_evento, entidad)
+                   VALUES (%s, %s, %s)
+                   ON CONFLICT (nodo_origen, identificador_evento) DO NOTHING
+                   RETURNING identificador_evento""",
+                (nodo_origen, evento_id, entidad),
+            )
+            if cur.fetchone() is None:
+                return False
 
             if operacion == "DELETE":
-                cur.execute("""
-                    DELETE FROM turnos_compartidos
-                    WHERE nodo_origen = %s
-                      AND turno_origen_id = %s
-                """, (
-                    turno["nodo_origen"],
-                    turno["turno_origen_id"]
-                ))
-
+                cur.execute(
+                    """DELETE FROM turnos_compartidos
+                       WHERE nodo_origen = %s AND turno_origen_id = %s""",
+                    (nodo_origen, turno["turno_origen_id"]),
+                )
             else:
-                cur.execute("""
-                    INSERT INTO turnos_compartidos (
-                        nodo_origen,
-                        turno_origen_id,
-                        paciente_id,
-                        paciente,
-                        fecha,
-                        hora,
-                        area,
-                        tipo_estudio,
-                        profesional,
-                        estado,
-                        fecha_actualizacion
-                    )
-                    VALUES (
-                        %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, CURRENT_TIMESTAMP
-                    )
-                    ON CONFLICT (nodo_origen, turno_origen_id)
-                    DO UPDATE SET
-                        paciente_id = EXCLUDED.paciente_id,
-                        paciente = EXCLUDED.paciente,
-                        fecha = EXCLUDED.fecha,
-                        hora = EXCLUDED.hora,
-                        area = EXCLUDED.area,
-                        tipo_estudio = EXCLUDED.tipo_estudio,
-                        profesional = EXCLUDED.profesional,
-                        estado = EXCLUDED.estado,
-                        fecha_actualizacion = CURRENT_TIMESTAMP
-                """, (
-                    turno["nodo_origen"],
-                    turno["turno_origen_id"],
-                    turno["paciente_id"],
-                    turno["paciente"],
-                    turno["fecha"],
-                    turno["hora"],
-                    turno["area"],
-                    turno["tipo_estudio"],
-                    turno["profesional"],
-                    turno["estado"]
-                ))
+                cur.execute(
+                    """INSERT INTO turnos_compartidos (
+                           nodo_origen, turno_origen_id, nodo_creador, area,
+                           paciente_id, paciente, fecha, hora, tipo_estudio,
+                           profesional, estado, fecha_actualizacion
+                       ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                                 clock_timestamp())
+                       ON CONFLICT (nodo_origen, turno_origen_id) DO UPDATE SET
+                           nodo_creador = EXCLUDED.nodo_creador,
+                           area = EXCLUDED.area,
+                           paciente_id = EXCLUDED.paciente_id,
+                           paciente = EXCLUDED.paciente,
+                           fecha = EXCLUDED.fecha,
+                           hora = EXCLUDED.hora,
+                           tipo_estudio = EXCLUDED.tipo_estudio,
+                           profesional = EXCLUDED.profesional,
+                           estado = EXCLUDED.estado,
+                           fecha_actualizacion = clock_timestamp()""",
+                    (
+                        nodo_origen, turno["turno_origen_id"],
+                        turno["nodo_creador"], turno["area"],
+                        turno.get("paciente_id"), turno["paciente"],
+                        turno["fecha"], turno["hora"], turno["tipo_estudio"],
+                        turno["profesional"], turno["estado"],
+                    ),
+                )
+    return True
 
 
-def sincronizar():
-    """Envía los eventos pendientes a los otros dos nodos."""
-
-    for origen in DB_CONFIG:
-
-        try:
-            # Leemos los eventos pendientes del nodo de origen.
-            with conectar(origen) as conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT evento_id, entidad,
-                               identificador_origen,
-                               operacion, datos
-                        FROM eventos_sincronizacion
-                        WHERE sincronizado = FALSE
-                        ORDER BY evento_id
-                    """)
-
-                    eventos = cur.fetchall()
-
-            for evento_id, entidad, identificador, operacion, datos in eventos:
-
-                destinos = [
-                    nodo for nodo in DB_CONFIG
-                    if nodo != origen
-                ]
-
-                try:
-                    # Convertimos el evento al formato compartido.
-                    turno = convertir_evento(
-                        origen, evento_id, datos
-                    )
-
-                    errores = []
-
-                    # Intentamos entregar a cada destino
-                    # de manera independiente.
-                    for destino in destinos:
-                        try:
-                            aplicar_evento(
-                                destino,
-                                origen,
-                                evento_id,
-                                entidad,
-                                operacion,
-                                turno
-                            )
-
-                            print(
-                                f"Evento {evento_id}: "
-                                f"recibido por {destino}."
-                            )
-
-                        except Exception as error:
-                            errores.append(destino)
-
-                            print(
-                                f"No se pudo entregar el evento "
-                                f"{evento_id} a {destino}: {error}"
-                            )
-
-                    # Solo se marca como sincronizado cuando
-                    # los dos destinos recibieron el evento.
-                    if not errores:
-                        with conectar(origen) as conn:
-                            with conn.cursor() as cur:
-                                cur.execute("""
-                                    UPDATE eventos_sincronizacion
-                                    SET sincronizado = TRUE
-                                    WHERE evento_id = %s
-                                """, (evento_id,))
-
-                        print(
-                            f"Evento {evento_id} de {origen}: "
-                            "sincronizado correctamente."
-                        )
-
-                    else:
-                        print(
-                            f"Evento {evento_id} de {origen}: "
-                            "queda pendiente de entrega."
-                        )
-
-                except Exception as error:
-                    print(
-                        f"Error procesando evento {evento_id} "
-                        f"de {origen}: {error}"
-                    )
-
-        except Exception as error:
-            print(
-                f"No se pudo procesar el nodo {origen}: {error}"
+def marcar_entrega(origen, evento_id, destino, estado, error=None):
+    with conectar(origen) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE eventos_destinos
+                   SET estado = %s, intentos = intentos + 1,
+                       ultimo_intento = clock_timestamp(), ultimo_error = %s
+                   WHERE evento_id = %s AND nodo_destino = %s""",
+                (estado, error, evento_id, destino),
+            )
+            cur.execute(
+                """UPDATE eventos_sincronizacion e
+                   SET sincronizado = NOT EXISTS (
+                       SELECT 1 FROM eventos_destinos d
+                       WHERE d.evento_id = e.evento_id
+                         AND d.estado <> 'entregado'
+                   )
+                   WHERE e.evento_id = %s""",
+                (evento_id,),
             )
 
 
+def sincronizar():
+    """Procesa eventos por destino, en orden, dejando errores reintentables."""
+    for origen in NODOS:
+        try:
+            with conectar(origen) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """SELECT e.evento_id, e.nodo_origen, e.entidad,
+                                  e.operacion, e.datos, d.nodo_destino,
+                                  d.estado, d.intentos, d.ultimo_intento,
+                                  clock_timestamp()
+                           FROM eventos_sincronizacion e
+                           JOIN eventos_destinos d USING (evento_id)
+                           WHERE d.estado IN ('pendiente', 'error')
+                           ORDER BY d.nodo_destino, e.evento_id"""
+                    )
+                    eventos = cur.fetchall()
+            ULTIMO_AVISO_ERROR_ORIGEN.pop(origen, None)
+        except Exception as error:
+            ahora_monotonico = time.monotonic()
+            if registrar_aviso_error_origen(
+                    origen, ahora_monotonico, ULTIMO_AVISO_ERROR_ORIGEN):
+                logging.warning("No se pudo leer la outbox de %s: %s", origen, error)
+            continue
+
+        detenido = set()
+        for (evento_id, nodo_origen, entidad, operacion, datos, destino,
+             estado, intentos, ultimo_intento, ahora) in eventos:
+            if not reintento_vencido(estado, intentos, ultimo_intento, ahora):
+                continue
+            if destino in detenido:
+                continue
+            try:
+                turno = convertir_evento(nodo_origen, entidad, datos)
+                aplicar_evento(
+                    destino, nodo_origen, evento_id, entidad, operacion, turno
+                )
+                marcar_entrega(origen, evento_id, destino, "entregado")
+                logging.info("Evento %s entregado a %s", evento_id, destino)
+            except Exception as error:
+                try:
+                    marcar_entrega(origen, evento_id, destino, "error", str(error))
+                except Exception:
+                    logging.exception("No se pudo registrar el error del evento %s", evento_id)
+                logging.exception("Falló evento %s hacia %s", evento_id, destino)
+                detenido.add(destino)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--once", action="store_true", help="Ejecuta un solo ciclo")
+    parser.add_argument(
+        "--interval", type=float,
+        default=float(os.environ.get("SYNC_INTERVAL_SECONDS", "10")),
+    )
+    args = parser.parse_args()
+    logging.basicConfig(
+        level=os.environ.get("LOG_LEVEL", "INFO"),
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
+    while True:
+        sincronizar()
+        if args.once:
+            break
+        time.sleep(max(args.interval, 1.0))
+
+
 if __name__ == "__main__":
-    sincronizar()
+    main()
