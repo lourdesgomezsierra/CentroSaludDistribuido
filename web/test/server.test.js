@@ -2,6 +2,8 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const {
   AREAS, DEMO_PREFIX, NODES, PERMISSION_CASES,
   buildAppointmentsSql, isLocalOrigin, isLoopback,
@@ -80,9 +82,23 @@ test("static UI endpoints return content without querying or mutating databases"
       const response = await fetch(`http://127.0.0.1:${address.port}${route}`);
       assert.equal(response.status, 200, route);
       assert.ok(Number(response.headers.get("content-length")) > 0, route);
+      if (route === "/") {
+        const html = await response.text();
+        for (const page of ["inicio", "consultorios", "laboratorio", "diagnostico_imagenes", "sincronizacion", "pruebas", "historial"]) {
+          assert.match(html, new RegExp(`data-page="${page}"`));
+        }
+      }
     }
     assert.equal((await fetch(`http://127.0.0.1:${address.port}/server.js`)).status, 404);
   } finally {
     await new Promise(resolve => server.close(resolve));
   }
+});
+
+test("turn creation dialog is protected from periodic view re-renders", () => {
+  const app = fs.readFileSync(path.join(__dirname, "../public/app.js"), "utf8");
+  assert.ok(app.includes('if ($("#turn-dialog")?.open) return;'));
+  assert.ok(app.includes('if (state.page === "inicio" || Object.hasOwn(nodeNames, state.page)) refreshOverview();'));
+  assert.ok(app.includes('dialog.dataset.registered = "true"; dialog.close(); dialog.remove();'));
+  assert.ok(app.includes('$("#turn-form").addEventListener("submit", submitCreateForm, { once: true });'));
 });

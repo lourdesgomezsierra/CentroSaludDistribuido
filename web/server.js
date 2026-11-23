@@ -355,6 +355,7 @@ async function listAppointments(filters) {
   const results = await Promise.all(nodes.map(async (nodeId) => {
     try {
       const items = await psqlRows(nodeId, buildAppointmentsSql(nodeId, filters));
+      for (const item of items) item.nodo_almacenamiento = nodeId;
       return { nodeId, items, error: null };
     } catch {
       return { nodeId, items: [], error: "Nodo no disponible o consulta fallida." };
@@ -645,25 +646,38 @@ async function pendingNonDemoDeliveriesTo(nodeId) {
   return counts.reduce((sum, count) => sum + count, 0);
 }
 
+async function pendingNonDemoDeliveriesFrom(nodeId) {
+  const result = await psqlJson(nodeId, `SELECT json_build_object('count',count(*))::text
+    FROM eventos_sincronizacion e JOIN eventos_destinos d USING(evento_id)
+    WHERE e.nodo_origen=${sqlLiteral(nodeId)}
+      AND d.estado <> 'entregado'
+      AND COALESCE(e.datos->>'paciente','') NOT LIKE ${sqlLiteral(`${DEMO_PREFIX}%`)};`);
+  return Number(result?.count || 0);
+}
+
 async function runDockerAction(nodeId, action, confirmation) {
-  if (nodeId !== "laboratorio") throw new HttpError(403, "El panel solo permite simular la caída del nodo Laboratorio.");
-  const phrases = { stop: "DETENER LABORATORIO", start: "INICIAR LABORATORIO" };
+  const node = serviceFor(nodeId);
+  const label = node.label.toLocaleUpperCase("es-AR");
+  const phrases = { stop: `DETENER ${label}`, start: `INICIAR ${label}` };
   if (!Object.hasOwn(phrases, action)) throw new HttpError(400, "Acción Docker no permitida.");
   if (confirmation !== phrases[action]) throw new HttpError(400, "La confirmación visual no coincide.");
   if (action === "stop") {
-    const pending = await pendingNonDemoDeliveriesTo(nodeId);
-    if (pending > 0) {
-      throw new HttpError(409, "No se detuvo Laboratorio: hay eventos no sintéticos pendientes de entrega.", { blockedEvents: pending });
+    const [inbound, outbound] = await Promise.all([
+      pendingNonDemoDeliveriesTo(nodeId),
+      pendingNonDemoDeliveriesFrom(nodeId),
+    ]);
+    if (inbound > 0 || outbound > 0) {
+      throw new HttpError(409, `No se detuvo ${node.label}: hay eventos reales pendientes que involucran este nodo.`, { inboundPending: inbound, outboundPending: outbound });
     }
   }
   try {
-    const { stdout } = await execFileAsync("docker", ["compose", action, "laboratorio"], {
+    const { stdout } = await execFileAsync("docker", ["compose", action, node.service], {
       cwd: ROOT,
       windowsHide: true,
       timeout: 20_000,
       maxBuffer: 128 * 1024,
     });
-    return { nodeId, action, result: stdout.trim() || "Acción completada." };
+    return { nodeId, action, service: node.service, result: stdout.trim() || "Acción completada." };
   } catch {
     throw new HttpError(503, "Docker no pudo completar la acción permitida. Revisá el estado del servicio.");
   }

@@ -77,9 +77,9 @@ docker compose ps
 ./scripts/iniciar-interfaz.ps1
 ```
 
-Abrí `http://127.0.0.1:4173`. Para detener el panel, usá `Ctrl+C` en su ventana. La interfaz se enlaza únicamente a loopback, consulta los tres nodos por Docker Compose y no expone la contraseña de PostgreSQL al navegador. El dashboard resume estado y conteos; la sección Turnos consulta filas reales. Los cambios se ejecutan en el nodo propietario, con las reglas SQL existentes.
+Abrí `http://127.0.0.1:4173`. Para detener el panel, usá `Ctrl+C` en su ventana. La interfaz se enlaza únicamente a loopback, consulta cada nodo por separado mediante Docker Compose y no expone la contraseña de PostgreSQL al navegador. El menú separa Resumen general, Consultorios, Laboratorio y Diagnóstico por Imágenes; cada página de nodo muestra la base local, los registros compartidos remotos y los permisos de edición recibidos de la API. Los cambios se ejecutan en el nodo propietario, con las reglas SQL existentes.
 
-El laboratorio A–G crea solo registros marcados `DEMO_DISTRIBUIDA_`; el caso de permisos usa transacciones revertidas. Detener/iniciar Laboratorio y reintentar un evento son acciones explícitas con frase de confirmación. La detención queda bloqueada si hay entregas no sintéticas pendientes para ese nodo. El panel no ofrece borrado de turnos ni operación de volúmenes. Revisá los datos antes de ejecutar las acciones de creación, modificación o cancelación.
+El laboratorio A–G crea solo registros marcados `DEMO_DISTRIBUIDA_`; el caso de permisos usa transacciones revertidas. Detener/iniciar un nodo y reintentar un evento son acciones explícitas con frase de confirmación y usan una lista fija de los servicios definidos en Compose. La detención queda bloqueada si existen eventos no sintéticos pendientes de entrada o salida para ese nodo. Detener un nodo afecta su base y disponibilidad local; no detiene los otros nodos. El panel no ofrece borrado de turnos ni operación de volúmenes. Revisá los datos antes de ejecutar las acciones de creación, modificación o cancelación.
 
 Pruebas locales de la interfaz (Node.js 18 o posterior; no se conectan a PostgreSQL ni a Docker):
 

@@ -1,10 +1,10 @@
 "use strict";
 
 const $ = (selector, root = document) => root.querySelector(selector);
-const state = { page: "inicio", overview: null, turns: [], events: [], demoTurns: [], test: "A", turnNode: "all", busy: false };
+const state = { page: "inicio", overview: null, turns: [], events: [], demoTurns: [], test: "A", turnNode: "all", turnFilters: { search: "", area: "", status: "", date: "" }, busy: false };
 const nodeNames = { consultorios: "Consultorios", laboratorio: "Laboratorio", diagnostico_imagenes: "Diagnóstico por Imágenes" };
 const areas = ["Consultorios", "Laboratorio", "Diagnóstico por Imágenes"];
-const pageNames = { inicio: "Resumen", turnos: "Turnos", sincronizacion: "Sincronización", pruebas: "Laboratorio de pruebas", historial: "Historial" };
+const pageNames = { inicio: "Resumen general", consultorios: "Consultorios", laboratorio: "Laboratorio", diagnostico_imagenes: "Diagnóstico por Imágenes", turnos: "Turnos", sincronizacion: "Sincronización", pruebas: "Laboratorio de pruebas", historial: "Historial" };
 
 function esc(value) { return String(value ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]); }
 function time(value) { if (!value) return "—"; const date = new Date(value); return Number.isNaN(date.getTime()) ? esc(value) : date.toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" }); }
@@ -25,8 +25,18 @@ function saveHistory(action, detail, result = "Completado") {
 function header(eyebrow, title, description, action = "") { return `<div class="page-heading"><div><div class="eyebrow">${esc(eyebrow)}</div><h1>${esc(title)}</h1><p>${esc(description)}</p></div>${action}</div>`; }
 function nodeStatus(node) {
   if (!node) return badge("Sin datos");
-  if (node.containerState !== "running") return badge(node.containerState === "unknown" ? "No disponible" : node.containerState, "error");
-  return node.connected ? badge("Operativo", "ok") : badge("PostgreSQL sin conexión", "error");
+  if (node.containerState === "unknown") return badge("No disponible", "error");
+  if (node.containerState === "exited" || node.containerState === "created") return badge("Detenido", "error");
+  if (node.containerState === "restarting") return badge("Reiniciando", "warn");
+  if (node.containerState !== "running") return badge(node.containerState, "error");
+  return node.connected ? badge("Operativo", "ok") : badge("Error de conexión PostgreSQL", "error");
+}
+function nodeStateLabel(node) {
+  if (!node) return "Consultando";
+  if (node.containerState === "running") return node.connected ? "Operativo" : "Error";
+  if (node.containerState === "exited" || node.containerState === "created") return "Detenido";
+  if (node.containerState === "restarting") return "Reiniciando";
+  return node.containerState === "unknown" ? "Sin datos" : node.containerState;
 }
 function nodeRows() {
   const nodes = state.overview?.nodes || [];
@@ -42,13 +52,24 @@ function renderOverview() {
     <section class="grid dashboard-grid"><article class="card section-card"><div class="section-head"><div><h2>Nodos de la red</h2><p>Estado de contenedores y conexión a base</p></div><a href="#sincronizacion" class="text-link">Ver sincronización →</a></div>${nodeRows()}<div class="callout"><span class="callout-icon">ⓘ</span><span>La interfaz consulta las bases reales de cada nodo. Las filas compartidas se muestran como copias de solo lectura; la autoridad de edición pertenece al nodo responsable.</span></div></article>
     <article class="card section-card"><div class="section-head"><div><h2>Actividad de sincronización</h2><p>Estado agregado del outbox por destino</p></div></div><div class="sync-summary">${["delivered", "pending", "failed"].map((key, i) => `<div class="sync-cell"><b>${Number(m[key] || 0)}</b><span>${["Entregados", "Pendientes", "Con error"][i]}</span></div>`).join("")}</div><div class="section-head" style="margin-top:22px"><div><h2>Topología</h2><p>Los originales se propagan a los otros nodos</p></div></div><div class="node-map">${nodes.map(n => `<div class="card map-node"><h3>${esc(n.label)}</h3><p>Servicio <span class="code">${esc(n.service)}</span><br>PostgreSQL · ${esc(n.port)}</p>${nodeStatus(n)}</div>`).join("")}</div></article></section>`;
 }
-function turnTable(rows) {
+function turnTable(rows, contextNode = null) {
   if (!rows.length) return `<div class="empty"><b>No hay turnos para mostrar</b>Ajustá los filtros o verificá la conexión del nodo.</div>`;
-  return `<div class="table-wrap"><table class="data-table"><thead><tr><th>Paciente / turno</th><th>Área y estudio</th><th>Fecha</th><th>Responsable</th><th>Estado</th><th>Origen</th><th></th></tr></thead><tbody>${rows.map(t => `<tr><td><strong>${esc(t.paciente)}</strong><span class="subline">${esc(t.turno_origen_id)} · ${esc(t.record_type)}</span></td><td>${esc(t.area)}<span class="subline">${esc(t.tipo_estudio)}</span></td><td>${day(t.fecha)}<span class="subline">${esc(String(t.hora || "").slice(0, 5))}</span></td><td>${esc(nodeNames[t.nodo_responsable] || t.nodo_responsable)}</td><td>${badge(t.estado, t.estado === "Cancelado" ? "error" : t.estado === "Pendiente" ? "warn" : "ok")}</td><td>${esc(nodeNames[t.nodo_origen] || t.nodo_origen)}</td><td>${t.editable ? `<div class="test-actions"><button class="button secondary small" data-edit="${esc(t.local_id)}" data-node="${esc(t.nodo_creador)}">Editar</button>${t.estado !== "Cancelado" ? `<button class="button danger small" data-cancel="${esc(t.local_id)}" data-node="${esc(t.nodo_creador)}">Cancelar</button>` : ""}</div>` : `<span class="muted">Solo lectura</span>`}</td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="table-wrap"><table class="data-table"><thead><tr><th>Paciente / turno</th><th>Área y estudio</th><th>Fecha</th><th>Responsable</th><th>Estado</th><th>Origen</th><th>Acceso</th></tr></thead><tbody>${rows.map(t => { const local = contextNode ? t.nodo_almacenamiento === contextNode && t.nodo_creador === contextNode : t.nodo_almacenamiento === t.nodo_creador; const editable = Boolean(t.editable); return `<tr><td><strong>${esc(t.paciente)}</strong><span class="subline">${esc(t.turno_origen_id)} · ${esc(t.record_type)}</span></td><td>${esc(t.area)}<span class="subline">${esc(t.tipo_estudio)}</span></td><td>${day(t.fecha)}<span class="subline">${esc(String(t.hora || "").slice(0, 5))}</span></td><td>${esc(nodeNames[t.nodo_responsable] || t.nodo_responsable)}</td><td>${badge(t.estado, t.estado === "Cancelado" ? "error" : t.estado === "Pendiente" ? "warn" : "ok")}</td><td>${esc(nodeNames[t.nodo_origen] || t.nodo_origen)}<span class="subline">${esc(nodeNames[t.nodo_almacenamiento] || t.nodo_almacenamiento)}</span></td><td><div class="record-flags">${badge(local ? "LOCAL" : "REMOTO", local ? "ok" : "")}${editable ? badge("EDITABLE", "ok") : badge("SOLO LECTURA")}</div>${editable ? `<div class="test-actions"><button class="button secondary small" data-edit="${esc(t.local_id)}" data-node="${esc(t.nodo_almacenamiento)}">Editar</button>${t.estado !== "Cancelado" ? `<button class="button danger small" data-cancel="${esc(t.local_id)}" data-node="${esc(t.nodo_almacenamiento)}">Cancelar</button>` : ""}</div>` : ""}</td></tr>`; }).join("")}</tbody></table></div>`;
 }
 function renderTurns() {
   return `${header("Gestión", "Turnos", "Consulta turnos originales y compartidos. Las modificaciones se guardan en el nodo propietario.", `<button class="button primary" data-action="new-turn">＋ Crear turno</button>`)}
-    <article class="card section-card"><div class="filters"><input id="turn-search" class="field search" placeholder="Buscar paciente, estudio o identificador"><select id="turn-node" class="select"><option value="all">Todos los nodos</option>${Object.entries(nodeNames).map(([id, label]) => `<option value="${id}" ${state.turnNode === id ? "selected" : ""}>${esc(label)}</option>`).join("")}</select><select id="turn-area" class="select"><option value="">Todas las áreas</option>${areas.map(a => `<option>${esc(a)}</option>`).join("")}</select><select id="turn-status" class="select"><option value="">Todos los estados</option><option>Pendiente</option><option>Confirmado</option><option>Cancelado</option></select><button class="button secondary" data-action="filter-turns">Filtrar</button></div>${turnTable(state.turns)}</article>`;
+    <article class="card section-card"><div class="filters"><input id="turn-search" class="field search" placeholder="Buscar paciente, estudio o identificador" value="${esc(state.turnFilters.search)}"><select id="turn-node" class="select"><option value="all" ${state.turnNode === "all" ? "selected" : ""}>Todos los nodos</option>${Object.entries(nodeNames).map(([id, label]) => `<option value="${id}" ${state.turnNode === id ? "selected" : ""}>${esc(label)}</option>`).join("")}</select><select id="turn-area" class="select"><option value="">Todas las áreas</option>${areas.map(a => `<option ${state.turnFilters.area === a ? "selected" : ""}>${esc(a)}</option>`).join("")}</select><select id="turn-status" class="select"><option value="">Todos los estados</option><option ${state.turnFilters.status === "Pendiente" ? "selected" : ""}>Pendiente</option><option ${state.turnFilters.status === "Confirmado" ? "selected" : ""}>Confirmado</option><option ${state.turnFilters.status === "Cancelado" ? "selected" : ""}>Cancelado</option></select><input id="turn-date" class="field" type="date" title="Filtrar por fecha" value="${esc(state.turnFilters.date)}"><button class="button secondary" data-action="filter-turns">Filtrar</button></div>${turnTable(state.turns)}</article>`;
+}
+
+function renderNodePage(nodeId) {
+  const node = state.overview?.nodes?.find(item => item.id === nodeId);
+  const local = state.turns.filter(row => row.nodo_almacenamiento === nodeId && row.nodo_creador === nodeId).length;
+  const remote = state.turns.length - local;
+  const allowedAreas = nodeId === "consultorios" ? areas : nodeId === "laboratorio" ? ["Laboratorio"] : ["Diagnóstico por Imágenes"];
+  const actions = `<div class="node-page-actions"><button class="button primary" data-action="new-turn" data-node="${nodeId}">＋ Crear turno</button><button class="button danger" data-action="node-stop" data-node="${nodeId}" ${node?.containerState !== "running" ? "disabled" : ""}>Detener nodo</button><button class="button secondary" data-action="node-start" data-node="${nodeId}" ${node?.containerState === "running" ? "disabled" : ""}>Iniciar nodo</button></div>`;
+  return `${header("Nodo operativo", pageNames[nodeId], `Base independiente · área(s) de creación: ${allowedAreas.join(", ")}. Las reglas de autorización siguen aplicándose en PostgreSQL.`, actions)}
+    <section class="grid metrics">${metric("Estado", nodeStateLabel(node), `Servicio ${node?.service || nodeId}`, "◉")}${metric("Puerto publicado", node?.port || "—", "PostgreSQL 5432 dentro de Docker", "⌘")}${metric("Turnos locales", local, "Originales en este nodo", "▦")}${metric("Turnos remotos", remote, "Copias para consulta", "⇄")}</section>
+    <article class="card section-card"><div class="section-head"><div><h2>Turnos disponibles en ${esc(pageNames[nodeId])}</h2><p>LOCAL identifica al creador en esta base. REMOTO son copias recibidas; solo los originales autorizados se editan.</p></div>${nodeStatus(node)}</div><div class="filters"><input id="turn-search" class="field search" placeholder="Buscar paciente, estudio o identificador" value="${esc(state.turnFilters.search)}"><select id="turn-area" class="select"><option value="">Todas las áreas</option>${areas.map(a => `<option ${state.turnFilters.area === a ? "selected" : ""}>${esc(a)}</option>`).join("")}</select><select id="turn-status" class="select"><option value="">Todos los estados</option><option ${state.turnFilters.status === "Pendiente" ? "selected" : ""}>Pendiente</option><option ${state.turnFilters.status === "Confirmado" ? "selected" : ""}>Confirmado</option><option ${state.turnFilters.status === "Cancelado" ? "selected" : ""}>Cancelado</option></select><input id="turn-date" class="field" type="date" title="Filtrar por fecha" value="${esc(state.turnFilters.date)}"><button class="button secondary" data-action="filter-turns">Filtrar</button></div>${state.overview?.nodes?.find(n => n.id === nodeId)?.connected ? turnTable(state.turns, nodeId) : `<div class="empty"><b>Base del nodo no disponible</b>La consulta local se reanudará cuando PostgreSQL vuelva a estar operativo.</div>`}</article>`;
 }
 function eventTable(events) {
   if (!events.length) return `<div class="empty"><b>No se encontraron eventos</b>El outbox está vacío o los nodos no están disponibles.</div>`;
@@ -96,25 +117,29 @@ function renderHistory() {
 }
 function updateCrumb() { $("#crumb").textContent = pageNames[state.page] || "Resumen"; document.title = `CentroSalud | ${pageNames[state.page] || "Resumen"}`; }
 function render() {
+  // Keep the create form and its entered values intact while background reads finish.
+  if ($("#turn-dialog")?.open) return;
   updateCrumb();
   document.querySelectorAll(".nav-link").forEach(link => link.classList.toggle("active", link.dataset.page === state.page));
   const views = { inicio: renderOverview, turnos: renderTurns, sincronizacion: renderSync, pruebas: renderTests, historial: renderHistory };
-  $("#view").innerHTML = (views[state.page] || renderOverview)();
+  const nodePage = Object.hasOwn(nodeNames, state.page);
+  $("#view").innerHTML = nodePage ? renderNodePage(state.page) : (views[state.page] || renderOverview)();
   if (state.page === "pruebas" && ["B", "C", "E", "F"].includes(state.test)) fillDemoSelect();
 }
 async function refreshOverview() {
-  try { state.overview = await api("/api/overview"); $("#last-updated").textContent = `Actualizado ${time(state.overview.checkedAt)}`; if (state.page === "inicio") render(); }
+  try { state.overview = await api("/api/overview"); $("#last-updated").textContent = `Actualizado ${time(state.overview.checkedAt)}`; if (state.page === "inicio" || Object.hasOwn(nodeNames, state.page)) render(); }
   catch (error) { $("#last-updated").textContent = "No se pudo consultar la red"; toast(error.message, true); }
 }
 async function loadTurns() {
-  const search = $("#turn-search")?.value || ""; const area = $("#turn-area")?.value || ""; const status = $("#turn-status")?.value || "";
-  state.turnNode = $("#turn-node")?.value || state.turnNode;
-  const q = new URLSearchParams({ node: state.turnNode, search, area, status, limit: "100" });
-  try { const data = await api(`/api/turns?${q}`); state.turns = data.items || []; if (state.page === "turnos") render(); }
+  const search = $("#turn-search") ? $("#turn-search").value : state.turnFilters.search; const area = $("#turn-area") ? $("#turn-area").value : state.turnFilters.area; const status = $("#turn-status") ? $("#turn-status").value : state.turnFilters.status; const date = $("#turn-date") ? $("#turn-date").value : state.turnFilters.date;
+  state.turnFilters = { search, area, status, date };
+  state.turnNode = Object.hasOwn(nodeNames, state.page) ? state.page : ($("#turn-node")?.value || state.turnNode);
+  const q = new URLSearchParams({ node: state.turnNode, search, area, status, date, limit: "100" });
+  try { const data = await api(`/api/turns?${q}`); state.turns = data.items || []; if (state.page === "turnos" || Object.hasOwn(nodeNames, state.page)) render(); }
   catch (error) { toast(error.message, true); }
 }
 async function loadEvents() { try { const data = await api("/api/events?limit=100"); state.events = data.events || []; if (state.page === "sincronizacion") render(); } catch (error) { toast(error.message, true); } }
-async function refreshAll() { await Promise.all([refreshOverview(), ...(state.page === "turnos" ? [loadTurns()] : []), ...(state.page === "sincronizacion" ? [loadEvents()] : [])]); }
+async function refreshAll() { await Promise.all([refreshOverview(), ...(state.page === "turnos" || Object.hasOwn(nodeNames, state.page) ? [loadTurns()] : []), ...(state.page === "sincronizacion" ? [loadEvents()] : [])]); }
 async function loadDemoTurns() { try { const data = await api("/api/demo-turns?node=all"); state.demoTurns = data.turns || []; } catch { state.demoTurns = []; } }
 function fillDemoSelect() {
   const select = $("#demo-turn-select"); if (!select) return;
@@ -128,7 +153,7 @@ function selectedDemo() {
 function futureDate() { const date = new Date(); date.setDate(date.getDate() + 7); return date.toISOString().slice(0, 10); }
 function showResult(message, ok = true) { const target = $("#test-result"); if (target) target.innerHTML = `<div class="callout ${ok ? "" : ""}" style="margin-top:14px"><span class="callout-icon">${ok ? "✓" : "!"}</span><span>${esc(message)}</span></div>`; }
 function askConfirm({ title, copy, phrase, label = "Escribí la frase para continuar", danger = true }) {
-  const dialog = $("#confirm-dialog"); $("#confirm-title").textContent = title; $("#confirm-copy").textContent = copy; $("#confirm-label").textContent = label; $("#confirm-input").value = ""; $("#confirm-accept").className = `button ${danger ? "danger" : "primary"}`;
+  const dialog = $("#confirm-dialog"); $("#confirm-title").textContent = title; $("#confirm-copy").textContent = `${copy} Frase requerida: ${phrase}`; $("#confirm-label").textContent = label; $("#confirm-input").value = ""; $("#confirm-accept").className = `button ${danger ? "danger" : "primary"}`;
   dialog.showModal();
   return new Promise(resolve => {
     const form = $("#confirm-form"); const close = () => { dialog.removeEventListener("close", finish); resolve(null); };
@@ -151,15 +176,30 @@ async function verifySelected() {
   const summary = data.recipients.map(r => `${nodeNames[r.nodeId]}: ${r.copies} copia(s), ${r.receipts} recibo(s), ${r.circularEvents} eventos de retorno`).join(" · ");
   showResult(`${turn.turno_origen_id}: ${summary}`); saveHistory("Verificación de entrega", turn.turno_origen_id); await loadEvents();
 }
-async function stopLab() {
-  const confirmation = await askConfirm({ title: "Detener Laboratorio", copy: "Solo se detendrá el servicio laboratorio. El panel verifica que no haya entregas no sintéticas pendientes a este nodo.", phrase: "DETENER LABORATORIO" });
+async function changeNodeState(nodeId, action) {
+  const nodeLabel = nodeNames[nodeId]; if (!nodeLabel) return;
+  const verb = action === "stop" ? "DETENER" : "INICIAR";
+  const phrase = `${verb} ${nodeLabel.toLocaleUpperCase("es-AR")}`;
+  const confirmation = await askConfirm({
+    title: `${action === "stop" ? "Detener" : "Iniciar"} ${nodeLabel}`,
+    copy: action === "stop"
+      ? `Se detendrá solo el servicio Docker Compose de ${nodeLabel}. Puede dejar temporalmente inaccesible su base local; los otros nodos y el sincronizador siguen independientes. La acción se bloquea si hay entregas reales pendientes que involucren este nodo.`
+      : `Se iniciará solo el servicio Docker Compose de ${nodeLabel}; no se reinicia ni recrea su base o volumen.`,
+    phrase,
+    danger: action === "stop",
+  });
   if (!confirmation) return;
-  await api("/api/nodes/laboratorio/stop", { method: "POST", body: JSON.stringify({ confirmation }) }); saveHistory("Laboratorio detenido", "docker compose stop laboratorio"); await refreshOverview(); showResult("Laboratorio detenido. Consultorios e Imágenes permanecen en ejecución.");
-}
-async function startLab() {
-  const confirmation = await askConfirm({ title: "Iniciar Laboratorio", copy: "Se iniciará únicamente el servicio laboratorio mediante Docker Compose.", phrase: "INICIAR LABORATORIO", danger: false });
-  if (!confirmation) return;
-  await api("/api/nodes/laboratorio/start", { method: "POST", body: JSON.stringify({ confirmation }) }); saveHistory("Laboratorio iniciado", "docker compose start laboratorio"); await refreshOverview(); showResult("Laboratorio iniciado. El sincronizador volverá a intentar la entrega pendiente.");
+  await api(`/api/nodes/${nodeId}/${action}`, { method: "POST", body: JSON.stringify({ confirmation }) });
+  const eventName = action === "stop" ? "detenido" : "iniciado";
+  saveHistory(`Nodo ${eventName}`, `${nodeLabel} · docker compose ${action}`);
+  await refreshOverview();
+  if (Object.hasOwn(nodeNames, state.page)) {
+    const node = state.overview?.nodes?.find(item => item.id === nodeId);
+    toast(`${nodeLabel}: ${node?.containerState || "estado actualizado"}.`);
+  } else {
+    toast(`${nodeLabel} ${eventName}. Los demás nodos continúan independientes.`);
+    if (state.page === "pruebas") showResult(`${nodeLabel} ${eventName}; los demás nodos no fueron detenidos.`);
+  }
 }
 async function verifyWithPolling(turn, attempts = 75) {
   for (let i = 0; i < attempts; i++) { const data = await api(`/api/verification/${turn.nodo_creador}/${encodeURIComponent(turn.turno_origen_id)}`); const lab = data.recipients.find(r => r.nodeId === "laboratorio"); if (lab?.copies === 1 && lab?.receipts >= 1) return { data, lab }; await new Promise(resolve => setTimeout(resolve, 5000)); }
@@ -181,14 +221,16 @@ async function permissionMatrix() {
   target.innerHTML = `<div class="callout" style="margin-top:12px"><span class="callout-icon">${data.passed === data.total ? "✓" : "!"}</span><span>Resultado: ${data.passed}/${data.total} casos correctos. Cada inserción permitida se revirtió con ROLLBACK.</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Nodo</th><th>Área</th><th>Esperado</th><th>Resultado</th><th>Detalle</th></tr></thead><tbody>${data.cases.map(c => `<tr><td>${esc(nodeNames[c.nodeId])}</td><td>${esc(c.area)}</td><td>${c.allowed ? "Permitido" : "Denegado"}</td><td>${c.passed ? badge("Correcto", "ok") : badge("Revisar", "error")}</td><td>${esc(c.detail)}</td></tr>`).join("")}</tbody></table></div>`;
   saveHistory("Matriz de permisos", `${data.passed}/${data.total} casos`); if (data.passed !== data.total) toast("La matriz presentó resultados inesperados.", true);
 }
-async function doAction(action) {
+async function doAction(action, eventNodeId = null) {
   if (action === "refresh") return refreshAll();
   if (action === "refresh-events") { await loadEvents(); await refreshOverview(); return; }
   if (action === "filter-turns") return loadTurns();
   if (action === "clear-history") { localStorage.removeItem("centrosalud-ui-history"); render(); return; }
   if (action === "create-demo") return withBusy(runDemoCreate);
-  if (action === "stop-lab") return withBusy(stopLab);
-  if (action === "start-lab") return withBusy(startLab);
+  if (action === "stop-lab") return withBusy(() => changeNodeState("laboratorio", "stop"));
+  if (action === "start-lab") return withBusy(() => changeNodeState("laboratorio", "start"));
+  if (action === "node-stop") return withBusy(() => changeNodeState(eventNodeId, "stop"));
+  if (action === "node-start") return withBusy(() => changeNodeState(eventNodeId, "start"));
   if (action === "verify-demo") return withBusy(verifySelected);
   if (action === "wait-recovery") return withBusy(async () => { const turn = selectedDemo(); if (!turn) return showResult("Seleccioná el turno sintético que quedó pendiente.", false); showResult("Sondeando el estado cada 5 segundos; el backoff puede llevar varios minutos…"); const { lab } = await verifyWithPolling(turn); saveHistory("Recuperación automática verificada", turn.turno_origen_id); showResult(`Recuperado: ${lab.copies} copia, ${lab.receipts} recibo(s), ${lab.circularEvents} evento(s) de retorno.`); await loadEvents(); await refreshOverview(); });
   if (action === "replay-demo") return withBusy(replayDemo);
@@ -208,13 +250,32 @@ async function doAction(action) {
     if (!confirmation) return;
     return withBusy(async () => { await api(`/api/tests/turns/${turn.nodo_creador}/${turn.turno_id}/cancel`, { method: "POST", body: JSON.stringify({ confirmation }) }); saveHistory("Turno sintético cancelado", turn.turno_origen_id); await loadDemoTurns(); showResult(`Turno ${turn.turno_origen_id} cancelado en el nodo propietario.`); });
   }
-  if (action === "new-turn") return openCreateForm();
+  if (action === "new-turn") return openCreateForm(eventNodeId || (Object.hasOwn(nodeNames, state.page) ? state.page : "consultorios"));
 }
-function openCreateForm() {
-  const view = $("#view"); view.insertAdjacentHTML("beforeend", `<dialog id="turn-dialog" class="dialog"><form id="turn-form"><div class="eyebrow">Registro</div><h2>Crear turno</h2><p>Se ejecuta crear_turno() en el nodo seleccionado. Evitá ingresar datos clínicos reales en este entorno.</p><div class="form-grid"><div class="form-field"><label>Nodo creador</label><select name="nodeId">${Object.entries(nodeNames).map(([id,label]) => `<option value="${id}">${esc(label)}</option>`).join("")}</select></div><div class="form-field"><label>Área</label><select name="area">${areas.map(a => `<option>${esc(a)}</option>`).join("")}</select></div><div class="form-field"><label>Paciente</label><input name="paciente" required maxlength="120"></div><div class="form-field"><label>ID paciente (opcional)</label><input name="pacienteId" type="number" min="1"></div><div class="form-field"><label>Fecha</label><input name="fecha" type="date" required value="${futureDate()}"></div><div class="form-field"><label>Hora</label><input name="hora" type="time" required value="10:30"></div><div class="form-field"><label>Tipo de estudio</label><input name="tipoEstudio" required maxlength="120"></div><div class="form-field"><label>Profesional</label><input name="profesional" required maxlength="120"></div><div class="form-field full"><label>Estado</label><select name="estado"><option>Pendiente</option><option>Confirmado</option></select></div></div><p class="form-note">La base aplica la matriz de permisos y la propiedad del nodo. La creación escribe en la base seleccionada.</p><div class="dialog-actions"><button type="button" class="button secondary" data-action="close-turn">Cancelar</button><button class="button primary">Crear turno</button></div></form></dialog>`);
-  const dialog = $("#turn-dialog"); dialog.showModal(); $("#turn-form").addEventListener("submit", submitCreateForm, { once: true });
+function allowedAreasFor(nodeId) {
+  return nodeId === "consultorios" ? areas : nodeId === "laboratorio" ? ["Laboratorio"] : ["Diagnóstico por Imágenes"];
 }
-async function submitCreateForm(event) { event.preventDefault(); const data = Object.fromEntries(new FormData(event.currentTarget).entries()); if (data.pacienteId === "") data.pacienteId = null; try { const result = await api("/api/turns", { method: "POST", body: JSON.stringify(data) }); $("#turn-dialog").close(); $("#turn-dialog").remove(); saveHistory("Turno creado", `${result.turn.turno_origen_id} · ${nodeNames[result.turn.nodo_creador]}`); toast(`Turno creado: ${result.turn.turno_origen_id}`); await loadTurns(); } catch (error) { toast(error.message, true); $("#turn-form").addEventListener("submit", submitCreateForm, { once: true }); } }
+function updateCreateAreas() {
+  const nodeId = $("#turn-form [name=nodeId]")?.value;
+  const select = $("#turn-form [name=area]");
+  if (!select) return;
+  const selected = select.value;
+  select.innerHTML = allowedAreasFor(nodeId).map(area => `<option>${esc(area)}</option>`).join("");
+  if (allowedAreasFor(nodeId).includes(selected)) select.value = selected;
+}
+function openCreateForm(nodeId = "consultorios") {
+  const fixedNode = Object.hasOwn(nodeNames, nodeId);
+  const view = $("#view"); view.insertAdjacentHTML("beforeend", `<dialog id="turn-dialog" class="dialog"><form id="turn-form"><div class="eyebrow">Base local · ${esc(nodeNames[nodeId])}</div><h2>Crear turno</h2><p>Se ejecuta crear_turno() en la base del nodo elegido. Consultorios puede crear para las tres áreas; los demás nodos se limitan a su área.</p><div class="form-grid"><div class="form-field"><label>Nodo creador</label><select name="nodeId" ${fixedNode && Object.hasOwn(nodeNames, state.page) ? "disabled" : ""}>${Object.entries(nodeNames).map(([id,label]) => `<option value="${id}" ${id === nodeId ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></div><div class="form-field"><label>Área</label><select name="area">${allowedAreasFor(nodeId).map(area => `<option>${esc(area)}</option>`).join("")}</select></div><div class="form-field"><label>Paciente</label><input name="paciente" required maxlength="120"></div><div class="form-field"><label>ID paciente (opcional)</label><input name="pacienteId" type="number" min="1"></div><div class="form-field"><label>Fecha</label><input name="fecha" type="date" required value="${futureDate()}"></div><div class="form-field"><label>Hora</label><input name="hora" type="time" required value="10:30"></div><div class="form-field"><label>Tipo de estudio</label><input name="tipoEstudio" required maxlength="120"></div><div class="form-field"><label>Profesional</label><input name="profesional" required maxlength="120"></div><div class="form-field full"><label>Estado</label><select name="estado"><option>Pendiente</option><option>Confirmado</option></select></div></div><p class="form-note">Las tablas locales y compartidas siguen separadas. La base aplica la matriz de permisos y la propiedad del nodo.</p><div class="dialog-actions"><button type="button" class="button secondary" data-action="close-turn">Cancelar</button><button class="button primary">Crear turno</button></div></form></dialog>`);
+  const dialog = $("#turn-dialog");
+  dialog.addEventListener("close", () => {
+    if (dialog.dataset.registered === "true" || !dialog.isConnected) return;
+    dialog.remove();
+    render();
+    if (state.page === "turnos" || Object.hasOwn(nodeNames, state.page)) loadTurns();
+  });
+  dialog.showModal(); $("#turn-form [name=nodeId]").addEventListener("change", updateCreateAreas); $("#turn-form").addEventListener("submit", submitCreateForm, { once: true });
+}
+async function submitCreateForm(event) { event.preventDefault(); const data = Object.fromEntries(new FormData(event.currentTarget).entries()); if (!data.nodeId && Object.hasOwn(nodeNames, state.page)) data.nodeId = state.page; if (data.pacienteId === "") data.pacienteId = null; try { const result = await api("/api/turns", { method: "POST", body: JSON.stringify(data) }); const dialog = $("#turn-dialog"); dialog.dataset.registered = "true"; dialog.close(); dialog.remove(); saveHistory("Turno creado", `${result.turn.turno_origen_id} · ${nodeNames[result.turn.nodo_creador]}`); toast(`Turno creado: ${result.turn.turno_origen_id}`); if (state.page === "turnos") state.turnNode = result.turn.nodo_creador; await loadTurns(); } catch (error) { toast(error.message, true); $("#turn-form").addEventListener("submit", submitCreateForm, { once: true }); } }
 async function editTurn(button) {
   const row = state.turns.find(t => String(t.local_id) === button.dataset.edit && t.nodo_creador === button.dataset.node); if (!row) return;
   const date = prompt("Nueva fecha (AAAA-MM-DD):", row.fecha); if (!date) return;
@@ -228,14 +289,17 @@ async function cancelTurnUI(button) {
   try { await api(`/api/turns/${row.nodo_creador}/${row.local_id}/cancel`, { method: "POST", body: JSON.stringify({ confirmation }) }); saveHistory("Turno cancelado", row.turno_origen_id); toast("Turno cancelado y cambio registrado para sincronización."); await loadTurns(); } catch (error) { toast(error.message, true); }
 }
 document.addEventListener("click", event => {
-  const nav = event.target.closest("[data-page]"); if (nav) { event.preventDefault(); state.page = nav.dataset.page; location.hash = state.page; render(); if (state.page === "turnos") loadTurns(); if (state.page === "sincronizacion") loadEvents(); if (state.page === "pruebas") loadDemoTurns().then(() => state.page === "pruebas" && render()); return; }
+  const nav = event.target.closest("[data-page]"); if (nav) { event.preventDefault(); state.page = nav.dataset.page; location.hash = state.page; render(); if (state.page === "turnos" || Object.hasOwn(nodeNames, state.page)) loadTurns(); if (state.page === "sincronizacion") loadEvents(); if (state.page === "pruebas") loadDemoTurns().then(() => state.page === "pruebas" && render()); return; }
   const test = event.target.closest("[data-test]"); if (test) { state.test = test.dataset.test; render(); loadDemoTurns().then(() => state.page === "pruebas" && render()); return; }
-  const action = event.target.closest("[data-action]"); if (action) { if (action.dataset.action === "close-turn") { $("#turn-dialog")?.close(); $("#turn-dialog")?.remove(); return; } doAction(action.dataset.action); return; }
+  const action = event.target.closest("[data-action]"); if (action) { if (action.dataset.action === "close-turn") { const dialog = $("#turn-dialog"); dialog?.close(); dialog?.remove(); render(); if (state.page === "turnos" || Object.hasOwn(nodeNames, state.page)) loadTurns(); return; } doAction(action.dataset.action, action.dataset.node || null); return; }
   const edit = event.target.closest("[data-edit]"); if (edit) editTurn(edit);
   const cancel = event.target.closest("[data-cancel]"); if (cancel) cancelTurnUI(cancel);
 });
 $("#refresh").addEventListener("click", refreshAll);
-window.addEventListener("hashchange", () => { const page = location.hash.slice(1); state.page = pageNames[page] ? page : "inicio"; render(); if (state.page === "turnos") loadTurns(); if (state.page === "sincronizacion") loadEvents(); });
+window.addEventListener("hashchange", () => { const page = location.hash.slice(1); state.page = pageNames[page] ? page : "inicio"; render(); if (state.page === "turnos" || Object.hasOwn(nodeNames, state.page)) loadTurns(); if (state.page === "sincronizacion") loadEvents(); });
 state.page = pageNames[location.hash.slice(1)] ? location.hash.slice(1) : "inicio";
 render(); refreshOverview();
-setInterval(() => { if (state.page === "inicio") refreshOverview(); if (state.page === "sincronizacion") { loadEvents(); refreshOverview(); } }, 15000);
+if (state.page === "turnos" || Object.hasOwn(nodeNames, state.page)) loadTurns();
+if (state.page === "sincronizacion") loadEvents();
+if (state.page === "pruebas") loadDemoTurns().then(() => state.page === "pruebas" && render());
+setInterval(() => { if (state.page === "inicio" || Object.hasOwn(nodeNames, state.page)) refreshOverview(); if (state.page === "sincronizacion") { loadEvents(); refreshOverview(); } }, 15000);
